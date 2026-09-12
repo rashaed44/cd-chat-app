@@ -3,12 +3,24 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
+const cors = require('cors');
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
 
+// تفعيل CORS لجميع الطلبات
+app.use(cors({ origin: "*" }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+const server = http.createServer(app);
+
+// تهيئة Socket.IO مع تفعيل CORS والوسائط المقبولة
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  },
+  transports: ['polling', 'websocket']
+});
 
 const MESSAGES_FILE = path.join(__dirname, 'messages.json');
 
@@ -17,12 +29,18 @@ function loadMessages() {
     if (fs.existsSync(MESSAGES_FILE)) {
       return JSON.parse(fs.readFileSync(MESSAGES_FILE, 'utf8'));
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error("خطأ في قراءة الملف:", e);
+  }
   return [];
 }
 
 function saveMessages(msgs) {
-  fs.writeFileSync(MESSAGES_FILE, JSON.stringify(msgs, null, 2));
+  try {
+    fs.writeFileSync(MESSAGES_FILE, JSON.stringify(msgs, null, 2));
+  } catch (e) {
+    console.error("خطأ في حفظ الملف:", e);
+  }
 }
 
 let onlineUsers = [];
@@ -32,8 +50,12 @@ io.on('connection', (socket) => {
   socket.emit('oldMessages', messages);
 
   socket.on('join', (username) => {
+    if (!username) return;
+
     onlineUsers = onlineUsers.filter(u => u.id !== socket.id);
-    const user = { id: socket.id, name: username, avatar: username[0].toUpperCase() };
+    const firstChar = username.trim() ? username.trim()[0].toUpperCase() : 'U';
+    const user = { id: socket.id, name: username, avatar: firstChar };
+    
     onlineUsers.push(user);
     socket.username = username;
     io.emit('onlineUsers', onlineUsers);
@@ -45,7 +67,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('chatMessage', (data) => {
-    const msg = { sender: data.sender, text: data.text, time: getTime() };
+    if (!data || !data.text) return;
+    const msg = { sender: data.sender || socket.username || 'مجهول', text: data.text, time: getTime() };
     messages.push(msg);
     saveMessages(messages);
     io.emit('message', msg);
